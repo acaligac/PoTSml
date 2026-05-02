@@ -61,10 +61,9 @@ XGB_SEARCH_ITER = 20    # RandomizedSearchCV iterations
 XGB_SEARCH_CV = 3       # inner CV folds for hyperparameter search
 
 # Logistic regression search space
+# Note: penalty= was deprecated in sklearn 1.8 — search over C only
 LR_SEARCH_SPACE = {
     "C": [0.001, 0.01, 0.1, 1.0, 10.0],
-    "penalty": ["l1", "l2"],
-    "solver": ["liblinear"],
 }
 
 # ---------------------------------------------------------------------------

@@ -12,9 +12,9 @@ Models:
 All use GroupKFold to ensure no patient appears in both train and test.
 
 Additions vs. v1:
-  - RandomizedSearchCV for both LogReg and XGBoost (nested CV)
-  - CalibratedClassifierCV (Platt scaling) on XGBoost — probabilities now
-    represent actual likelihoods rather than raw scores
+  - GridSearchCV for LogReg (small C grid), RandomizedSearchCV for XGBoost
+  - Manual Platt scaling (_PlattScaledClassifier) on XGBoost — probabilities
+    now represent actual likelihoods rather than raw scores
   - SHAP feature importance for XGBoost
   - Model serialization via joblib
 """
@@ -22,11 +22,9 @@ Additions vs. v1:
 import os
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import GroupKFold, RandomizedSearchCV
+from sklearn.model_selection import GroupKFold, GridSearchCV, RandomizedSearchCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.pipeline import Pipeline
 import xgboost as xgb
 import joblib
 
@@ -73,17 +71,16 @@ def _tune_logistic_regression(
     y_train: np.ndarray,
 ) -> LogisticRegression:
     """
-    Tune LogisticRegression via RandomizedSearchCV on the pre-scaled training set.
+    Tune LogisticRegression C via GridSearchCV on the pre-scaled training set.
+    Uses GridSearchCV (not Randomized) since the search space is small (5 values).
     Scores on PR-AUC (average_precision) — the right metric for imbalanced data.
     """
     lr = LogisticRegression(max_iter=1000, random_state=SEED)
-    search = RandomizedSearchCV(
+    search = GridSearchCV(
         lr,
         LR_SEARCH_SPACE,
-        n_iter=10,
         cv=3,
         scoring="average_precision",
-        random_state=SEED,
         n_jobs=-1,
     )
     search.fit(X_train_scaled, y_train)
@@ -93,51 +90,70 @@ def _tune_logistic_regression(
 def _tune_xgboost(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
+    groups_train: np.ndarray,
 ) -> xgb.XGBClassifier:
     """
-    Tune XGBoost via RandomizedSearchCV.
-    Returns the best estimator (unfitted on full train — RandomizedSearchCV refits).
+    Tune XGBoost via RandomizedSearchCV with GroupKFold inner CV.
+
+    Passing groups_train ensures the inner folds also respect patient boundaries,
+    preventing the same patient from appearing in both inner train and validation.
+    Without this, patient-level leakage re-enters during hyperparameter selection
+    even though it's already excluded from the outer fold.
     """
     xgb_base = xgb.XGBClassifier(
         random_state=SEED,
         eval_metric="logloss",
         verbosity=0,
     )
+    inner_cv = GroupKFold(n_splits=XGB_SEARCH_CV)
     search = RandomizedSearchCV(
         xgb_base,
         XGB_SEARCH_SPACE,
         n_iter=XGB_SEARCH_ITER,
-        cv=XGB_SEARCH_CV,
+        cv=inner_cv,
         scoring="average_precision",
         random_state=SEED,
         n_jobs=-1,
     )
-    search.fit(X_train, y_train)
+    search.fit(X_train, y_train, groups=groups_train)
     return search.best_estimator_
+
+
+class _PlattScaledClassifier:
+    """
+    Manual Platt scaling wrapper for a pre-fitted classifier.
+
+    sklearn removed cv='prefit' from CalibratedClassifierCV in 1.8.
+    This does the same thing: fit a logistic regression on top of the
+    base model's raw scores using a held-out calibration set.
+    """
+    def __init__(self, base_model, X_cal: pd.DataFrame, y_cal: np.ndarray):
+        raw = base_model.predict_proba(X_cal)[:, 1].reshape(-1, 1)
+        self._base = base_model
+        self._calibrator = LogisticRegression(C=1e10, max_iter=1000)
+        self._calibrator.fit(raw, y_cal)
+
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        raw = self._base.predict_proba(X)[:, 1].reshape(-1, 1)
+        cal = self._calibrator.predict_proba(raw)[:, 1]
+        return np.column_stack([1 - cal, cal])
 
 
 def _calibrate_xgboost(
     xgb_model: xgb.XGBClassifier,
     X_train: pd.DataFrame,
     y_train: np.ndarray,
-) -> CalibratedClassifierCV:
+) -> _PlattScaledClassifier:
     """
-    Apply Platt scaling (sigmoid calibration) to XGBoost.
+    Apply Platt scaling to XGBoost using a held-out calibration slice.
 
-    We hold out CALIBRATION_SPLIT of the training data to fit the calibration
-    layer, so the calibrator never sees the same data the base model trained on.
-    This avoids the calibration layer simply learning to reproduce training scores.
-
-    Returns a fitted CalibratedClassifierCV with the base XGBoost pre-fitted.
+    The last CALIBRATION_SPLIT fraction of training rows (in temporal order)
+    is used to fit the calibration layer — the base model never trained on it.
     """
     n_cal = max(1, int(len(y_train) * CALIBRATION_SPLIT))
-    # Simple temporal split within training data (maintains time order)
     X_cal = X_train.iloc[-n_cal:]
     y_cal = y_train[-n_cal:]
-
-    calibrated = CalibratedClassifierCV(xgb_model, cv="prefit", method="sigmoid")
-    calibrated.fit(X_cal, y_cal)
-    return calibrated
+    return _PlattScaledClassifier(xgb_model, X_cal, y_cal)
 
 
 def compute_shap_importance(
@@ -199,7 +215,8 @@ def train_and_evaluate(
         "best_xgb_params": {},
     }
 
-    last_xgb_model = None  # save final fold's model for SHAP + serialization
+    last_xgb_model = None   # save final fold's model for SHAP + serialization
+    last_X_test = None      # save final fold's held-out set for SHAP (never seen by model)
 
     for fold, (train_idx, test_idx) in enumerate(gkf.split(X, y, groups)):
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
@@ -221,7 +238,7 @@ def train_and_evaluate(
 
         if tune:
             lr = _tune_logistic_regression(X_train_scaled, y_train)
-            print(f"  LR best params: C={lr.C}, penalty={lr.penalty}")
+            print(f"  LR best params: C={lr.C}")
         else:
             lr = LogisticRegression(max_iter=1000, random_state=SEED)
             lr.fit(X_train_scaled, y_train)
@@ -230,8 +247,9 @@ def train_and_evaluate(
         results["logistic_regression"].append(compute_metrics(y_test, lr_probs))
 
         # 3. XGBoost — optionally tune, then calibrate
+        groups_train = groups[train_idx]
         if tune:
-            xgb_model = _tune_xgboost(X_train, y_train)
+            xgb_model = _tune_xgboost(X_train, y_train, groups_train)
             print(f"  XGB best params: {xgb_model.get_params()}")
             results["best_xgb_params"] = xgb_model.get_params()
         else:
@@ -244,11 +262,13 @@ def train_and_evaluate(
         results["xgboost"].append(compute_metrics(y_test, xgb_probs))
 
         last_xgb_model = xgb_model  # keep for SHAP + serialization
+        last_X_test = X_test        # held-out data this model never trained on
 
-    # SHAP importance on the last fold's XGBoost model
-    if last_xgb_model is not None:
+    # SHAP importance computed on the last fold's test set — data the model
+    # never saw during training, so importance values aren't inflated by overfitting.
+    if last_xgb_model is not None and last_X_test is not None:
         results["shap_importance"] = compute_shap_importance(
-            last_xgb_model, X, feature_cols
+            last_xgb_model, last_X_test, feature_cols
         )
 
     # Serialize the last fold's XGBoost model

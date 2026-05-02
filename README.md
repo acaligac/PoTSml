@@ -148,6 +148,48 @@ This will:
 
 ---
 
+## 🩷 Results (50 patients × 3 days, default XGBoost params, 5-fold GroupKFold)
+
+> Threshold is chosen per-fold to achieve ≥80% recall with maximum precision — not hardcoded at 0.5.
+
+**Model comparison**
+
+| Model | ROC-AUC | PR-AUC | Brier ↓ | Recall | Precision |
+|---|---|---|---|---|---|
+| Rule baseline | 0.525 ± 0.003 | 0.333 ± 0.009 | 0.285 ± 0.006 | 1.000 | 0.320 |
+| Logistic Regression | 0.624 ± 0.010 | 0.398 ± 0.013 | 0.211 ± 0.004 | 0.800 | 0.379 |
+| **XGBoost** | **0.632 ± 0.009** | **0.413 ± 0.011** | **0.210 ± 0.004** | **0.800** | **0.382** |
+
+Random PR-AUC baseline (= prevalence) ≈ 0.32. XGBoost is 29% above random and beats the rule baseline by +24% PR-AUC, at the same recall.
+
+**XGBoost feature importance (mean |SHAP|, last fold test set)**
+
+| Rank | Feature | Mean \|SHAP\| |
+|---|---|---|
+| 1 | `hr_roll30_mean` | 0.2491 |
+| 2 | `hr_trend` | 0.1939 |
+| 3 | `hrv_lag10` | 0.1632 |
+| 4 | `posture_duration` | 0.1192 |
+| 5 | `hrv_roll5_mean` | 0.1047 |
+| 6 | `delta_hr` | 0.1018 |
+| 7 | `heart_rate` | 0.0965 |
+| 8–21 | lags, std features, posture | < 0.07 |
+
+The model correctly identifies the 30-minute HR baseline, the short-vs-long HR trend, and how long the patient has been standing as the dominant signals — consistent with POTS physiology.
+
+**Horizon sensitivity (XGBoost, 5-fold GroupKFold)**
+
+| Horizon | ROC-AUC | PR-AUC | Recall |
+|---|---|---|---|
+| 5 min | 0.643 ± 0.005 | 0.271 ± 0.007 | 0.800 |
+| 10 min | — | — | — |
+| **15 min** ← default | **0.632 ± 0.009** | **0.413 ± 0.011** | **0.800** |
+| 30 min | — | — | — |
+
+> Run `python run.py` locally for the full horizon sweep.
+
+---
+
 ## 🌸 Honest limitations
 
 This is a **proof-of-concept on synthetic data**. It has not been validated on real patients.
