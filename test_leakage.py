@@ -10,10 +10,10 @@ import pandas as pd
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from src.generate_data import generate_patient
-from src.features import build_features, get_feature_columns
+from generate_data import generate_patient
+from features import build_features, get_feature_columns
 
 
 def test_no_future_leakage_in_features():
@@ -100,12 +100,54 @@ def test_symptom_not_in_features():
     return True
 
 
+def test_label_correctness():
+    """
+    Verify the label construction is a strictly future window.
+
+    Properties checked:
+      1. label[t] == 1 iff at least one symptom occurs in (t+1, t+horizon]
+         — checked by manually scanning symptom[t+1..t+horizon] for each row.
+      2. label[t] never fires on a symptom at time t itself (no same-tick leakage).
+      3. label[t] never fires on symptoms strictly before t (no past leakage).
+    """
+    from config import DEFAULT_HORIZON
+
+    df = generate_patient(0, n_days=3, seed=7)
+    df_feat = build_features(df, horizon=DEFAULT_HORIZON)
+
+    # Align raw symptom series to the feature DataFrame via time index
+    sym = df.set_index("time")["symptom"]
+
+    n_checked = 0
+    for _, row in df_feat.iterrows():
+        t = row["time"]
+        patient = row["patient_id"]
+        label = int(row["label"])
+
+        # Build the future window (t+1 .. t+horizon) in the raw series
+        future_times = pd.date_range(t, periods=DEFAULT_HORIZON + 1, freq="1min")[1:]
+        future_syms = sym.reindex(future_times).fillna(0).values
+        expected = int(future_syms.max())
+
+        if label != expected:
+            print(f"FAIL: label mismatch at {t} (patient {patient}): "
+                  f"label={label}, expected={expected}")
+            return False
+
+        n_checked += 1
+
+    print(f"PASS: Label correctness verified across {n_checked} rows "
+          f"(horizon={DEFAULT_HORIZON} min)")
+    return True
+
+
 if __name__ == "__main__":
     results = [
         test_no_future_leakage_in_features(),
         test_label_not_deterministic_from_features(),
         test_latent_state_not_in_features(),
         test_symptom_not_in_features(),
+        test_label_correctness(),
     ]
 
     print(f"\n{'='*40}")

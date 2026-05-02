@@ -9,8 +9,9 @@ The forecasting label: will a symptom occur in the next HORIZON minutes?
 
 import pandas as pd
 import numpy as np
+from config import DEFAULT_HORIZON
 
-HORIZON = 15  # predict symptoms 15 minutes ahead
+HORIZON = DEFAULT_HORIZON  # predict symptoms N minutes ahead
 
 
 def build_features(df: pd.DataFrame, horizon: int = HORIZON) -> pd.DataFrame:
@@ -23,10 +24,13 @@ def build_features(df: pd.DataFrame, horizon: int = HORIZON) -> pd.DataFrame:
     df = df.copy()
 
     # --- Forecasting label ---
-    # For each patient, label[t] = 1 if any symptom occurs in (t+1, t+horizon]
+    # label[t] = 1 if any symptom occurs in (t+1, t+horizon] (purely future)
+    # shift(-horizon) puts symptom[t+horizon] at position t; rolling(horizon)
+    # backward then covers symptom[t+1..t+horizon]. min_periods=horizon ensures
+    # incomplete windows at series end become NaN and are dropped below.
     df["label"] = (
         df.groupby("patient_id")["symptom"]
-        .transform(lambda x: x.shift(-1).rolling(horizon, min_periods=1).max())
+        .transform(lambda x: x.shift(-horizon).rolling(horizon, min_periods=horizon).max())
     )
 
     # --- Strictly causal features ---
@@ -73,8 +77,12 @@ def build_features(df: pd.DataFrame, horizon: int = HORIZON) -> pd.DataFrame:
         .transform(lambda x: x.rolling(10, min_periods=1).mean())
     )
 
-    # HR acceleration: rate of change over last 3 minutes
-    df["hr_accel"] = df["heart_rate"] - df.groupby("patient_id")["heart_rate"].shift(3)
+    # HR acceleration: rate of change of the smoothed signal over last 3 minutes.
+    # Using hr_roll5_mean instead of raw heart_rate suppresses sensor noise,
+    # which otherwise dominates the raw 3-minute diff.
+    df["hr_accel"] = (
+        df["hr_roll5_mean"] - df.groupby("patient_id")["hr_roll5_mean"].shift(3)
+    )
 
     # --- Drop rows with undefined features ---
     feature_cols = get_feature_columns()
