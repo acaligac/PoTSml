@@ -114,7 +114,7 @@ def main():
     print_results(results)
 
     if results["best_xgb_params"]:
-        print(f"\n  XGBoost model saved to {MODEL_DIR}/xgboost.pkl")
+        print(f"\n  Calibrated XGBoost saved to {MODEL_DIR}/xgboost_calibrated.pkl")
 
     # Step 5: Horizon sensitivity analysis
     print(f"\n[5/5] Running horizon sensitivity analysis...")

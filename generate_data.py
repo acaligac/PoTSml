@@ -135,7 +135,7 @@ def _generate_symptom_from_state_history(
 
     # Add rare spontaneous symptoms (noise — real patients sometimes feel
     # symptoms without obvious triggers)
-    n_spontaneous = rng.poisson(2)  # ~2 per day
+    n_spontaneous = rng.poisson(2 * n_days)  # ~2 per day
     for _ in range(n_spontaneous):
         start = rng.integers(0, n)
         duration = rng.integers(2, 8)

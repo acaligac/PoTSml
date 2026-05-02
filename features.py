@@ -24,10 +24,13 @@ def build_features(df: pd.DataFrame, horizon: int = HORIZON) -> pd.DataFrame:
     df = df.copy()
 
     # --- Forecasting label ---
-    # For each patient, label[t] = 1 if any symptom occurs in (t+1, t+horizon]
+    # label[t] = 1 if any symptom occurs in (t+1, t+horizon] (purely future)
+    # shift(-horizon) puts symptom[t+horizon] at position t; rolling(horizon)
+    # backward then covers symptom[t+1..t+horizon]. min_periods=horizon ensures
+    # incomplete windows at series end become NaN and are dropped below.
     df["label"] = (
         df.groupby("patient_id")["symptom"]
-        .transform(lambda x: x.shift(-1).rolling(horizon, min_periods=1).max())
+        .transform(lambda x: x.shift(-horizon).rolling(horizon, min_periods=horizon).max())
     )
 
     # --- Strictly causal features ---
