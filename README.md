@@ -13,7 +13,7 @@
 
 ---
 
-> **Postural Orthostatic Tachycardia Syndrome (POTS)** is a chronic condition affecting an estimated 1–3 million people in the US, the majority of them women. symptoms (dizziness, tachycardia, fatigue, brain fog) often strike without warning, making daily life unpredictable.
+> **postural orthostatic tachycardia syndrome (PoTS)** is a chronic condition affecting an estimated 1–3 million people in the US, the majority of them women. symptoms (dizziness, tachycardia, fatigue, brain fog) often strike without warning, making daily life unpredictable.
 >
 > this project explores whether wearable sensor data can give patients a 15-minute heads-up before an episode hits. 💗
 
