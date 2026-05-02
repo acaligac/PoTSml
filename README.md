@@ -2,11 +2,6 @@
 
 # 🌸 PoTS episode prediction 🌸
 
-![Python](https://img.shields.io/badge/Python-3.9+-ff69b4?style=for-the-badge&logo=python&logoColor=white)
-![XGBoost](https://img.shields.io/badge/XGBoost-ff85c2?style=for-the-badge&logo=data:image/png;base64,)
-![scikit-learn](https://img.shields.io/badge/scikit--learn-ffb6c1?style=for-the-badge&logo=scikit-learn&logoColor=white)
-![Status](https://img.shields.io/badge/status-proof--of--concept-ff69b4?style=for-the-badge)
-
 *a machine learning pipeline for forecasting symptomatic POTS episodes from wearable physiological data*
 
 </div>
@@ -214,10 +209,4 @@ this is a **proof-of-concept on synthetic data**. it has not been validated on r
 - [ ] reliability diagrams (visual calibration curves)
 - [ ] multi-day temporal train/test split (train days 1–5, test days 6–7)
 
----
 
-<div align="center">
-
-*built with care* 🌸
-
-</div>
