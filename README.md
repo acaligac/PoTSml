@@ -194,10 +194,4 @@ this is a **proof-of-concept on synthetic data**. not validated on real patients
 - [ ] AR(1) noise in HR signal for more realistic autocorrelation
 - [x] label correctness test in `test_leakage.py`
 
----
 
-<div align="center">
-
-*built with care for everyone navigating life with PoTS* 🌸
-
-</div>
