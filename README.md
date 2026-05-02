@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🌸 PoTS Episode Prediction 🌸
+# 🌸 PoTS episode prediction 🌸
 
 ![Python](https://img.shields.io/badge/Python-3.9+-ff69b4?style=for-the-badge&logo=python&logoColor=white)
 ![XGBoost](https://img.shields.io/badge/XGBoost-ff85c2?style=for-the-badge&logo=data:image/png;base64,)
@@ -13,17 +13,19 @@
 
 ---
 
-> **Postural Orthostatic Tachycardia Syndrome (POTS)** is a chronic condition affecting an estimated 1–3 million people in the US — the majority of them women. Symptoms (dizziness, tachycardia, fatigue, brain fog) often strike without warning, making daily life unpredictable. This project explores whether wearable sensor data can give patients a 15-minute heads-up before an episode hits. 💗
+> **Postural Orthostatic Tachycardia Syndrome (POTS)** is a chronic condition affecting an estimated 1–3 million people in the US, the majority of them women. symptoms (dizziness, tachycardia, fatigue, brain fog) often strike without warning, making daily life unpredictable.
+>
+> this project explores whether wearable sensor data can give patients a 15-minute heads-up before an episode hits. 💗
 
 ---
 
 ## 🌷 What this project does
 
-This is a **forecasting pipeline**, not a nowcasting one. The model answers:
+this is a **forecasting pipeline**, not a nowcasting one. the model answers:
 
-> *"Based on your heart rate, HRV, and posture over the last 30 minutes — will you likely have a symptomatic episode in the next 15 minutes?"*
+> *"based on your heart rate, HRV, and posture over the last 30 minutes will you likely have a symptomatic episode in the next 15 minutes?"*
 
-That distinction matters. Knowing you're *currently* symptomatic is useless. Knowing you're *about to be* symptomatic gives you time to sit down, hydrate, take medication, or cancel that standing meeting.
+knowing you're *currently* symptomatic is useless. knowing you're *about to be* symptomatic gives you time to sit down, hydrate, take medication, or cancel that standing meeting.
 
 ---
 
@@ -41,45 +43,45 @@ Physiological signals          →   Feature engineering   →   XGBoost classif
   emission w/ 5–20 min lag
 ```
 
-**Three models are trained and compared:**
+**three models are trained and compared:**
 
-| Model | Purpose |
+| model | purpose |
 |---|---|
-| 🩺 Rule-based baseline | Would a clinician eyeballing the chart catch this? |
-| 📈 Logistic Regression | Is the problem even linearly separable? |
-| 🌲 XGBoost | Can we do better with temporal lag features? |
+| 🩺 rule-based baseline | would a clinician eyeballing the chart catch this? |
+| 📈 logistic Regression | is the problem even linearly separable? |
+| 🌲 XGBoost | can we do better with temporal lag features? |
 
 ---
 
-## 💕 Key design decisions
+## 💕 key design decisions
 
-### 1. Latent-state data generation
+### 1. latent-state data generation
 
-Rather than hand-waving synthetic data, the generator uses a **4-state autonomic Markov model**:
+rather than hand-waving synthetic data, the generator uses a **4-state autonomic Markov model**:
 
 | State | Meaning | Standing transition |
 |---|---|---|
-| 0 — Stable | Normal compensation | Low escalation risk |
-| 1 — Compensated | Mild autonomic stress | Moderate escalation |
-| 2 — Stressed | Significant strain | High escalation |
-| 3 — Decompensating | Pre-symptomatic | Very high symptom probability |
+| 0 — stable | normal compensation | low escalation risk |
+| 1 — compensated | mild autonomic stress | moderate escalation |
+| 2 — stressed | significant strain | high escalation |
+| 3 — decompensating | pre-symptomatic | very high symptom probability |
 
-Posture drives state transitions. Circadian rhythm modulates HR. Patient-level severity (`pots_severity ~ Uniform(0.3, 1.0)`) scales reactivity. Symptoms are emitted from states 2–3 with a **5–20 minute stochastic lag** — which is what makes this a non-trivial forecasting task.
+posture drives state transitions. circadian rhythm modulates HR. patient-level severity (`pots_severity ~ Uniform(0.3, 1.0)`) scales reactivity. symptoms are emitted from states 2–3 with a **5–20 minute stochastic lag** which is what makes this a non-trivial forecasting task.
 
-### 2. Strictly causal features
+### 2. strictly causal features
 
-Every feature at time *t* uses only data from times ≤ *t*. This means:
-- Expanding (not rolling) mean for baseline HR deviation
-- No global statistics computed before the prediction window
-- No `fillna(0)` shortcuts that implicitly leak structure
+every feature at time *t* uses only data from times ≤ *t*. this means:
+- expanding (not rolling) mean for baseline HR deviation
+- no global statistics computed before the prediction window
+- no `fillna(0)` shortcuts that implicitly leak structure
 
-Automated leakage tests in `tests/test_leakage.py` enforce this.
+automated leakage tests in `tests/test_leakage.py` enforce this.
 
-### 3. Patient-level cross-validation
+### 3. patient-level cross-validation
 
-`GroupKFold(n_splits=5)` ensures **no patient appears in both train and test**. Without this, the model memorizes patient-specific baselines and evaluation metrics are meaningless.
+`GroupKFold(n_splits=5)` ensures **no patient appears in both train and test**. without this, the model memorizes patient-specific baselines and evaluation metrics are meaningless.
 
-### 4. Metrics chosen for clinical relevance
+### 4. metrics chosen for clinical relevance
 
 - **PR-AUC** — the right metric for imbalanced data (~5–8% symptom prevalence)
 - **ROC-AUC** — threshold-independent discrimination
@@ -87,27 +89,27 @@ Automated leakage tests in `tests/test_leakage.py` enforce this.
 
 ---
 
-## 🌺 Feature set (21 features, all causal)
+## 🌺 feature set (21 features, all causal)
 
-| Feature | Type | Window |
+| feature | type | window |
 |---|---|---|
-| `heart_rate` | Raw signal | — |
-| `hrv_proxy` | Raw signal | — |
-| `delta_hr` | Deviation from expanding baseline | — |
-| `posture` | Binary (standing/supine) | — |
-| `posture_duration` | Minutes in current posture | — |
-| `posture_burden_10` | Fraction of last 10 min standing | 10 min |
-| `hr_roll5_mean` / `_std` | Short-term HR trend + volatility | 5 min |
-| `hrv_roll5_mean` / `_std` | Short-term HRV trend + volatility | 5 min |
-| `hr_roll30_mean` | Longer-term HR context | 30 min |
-| `hr_trend` | Short- vs. long-term HR divergence | 5 vs. 30 min |
-| `hr_accel` | Rate of HR change | 3 min diff |
-| `hr_lag1/3/5/10` | Past HR values (ARIMA-like) | 1/3/5/10 min |
-| `hrv_lag1/3/5/10` | Past HRV values | 1/3/5/10 min |
+| `heart_rate` | raw signal | — |
+| `hrv_proxy` | raw signal | — |
+| `delta_hr` | deviation from expanding baseline | — |
+| `posture` | binary (standing/supine) | — |
+| `posture_duration` | minutes in current posture | — |
+| `posture_burden_10` | fraction of last 10 min standing | 10 min |
+| `hr_roll5_mean` / `_std` | short-term HR trend + volatility | 5 min |
+| `hrv_roll5_mean` / `_std` | short-term HRV trend + volatility | 5 min |
+| `hr_roll30_mean` | longer-term HR context | 30 min |
+| `hr_trend` | short- vs. long-term HR divergence | 5 vs. 30 min |
+| `hr_accel` | rate of HR change | 3 min diff |
+| `hr_lag1/3/5/10` | past HR values (ARIMA-like) | 1/3/5/10 min |
+| `hrv_lag1/3/5/10` | past HRV values | 1/3/5/10 min |
 
 ---
 
-## 🌷 Project structure
+## 🌷 project structure
 
 ```
 pots-episode-prediction/
@@ -126,7 +128,7 @@ pots-episode-prediction/
 
 ---
 
-## 🩷 How to run
+## 🩷 how to run
 
 ```bash
 # clone
@@ -140,53 +142,40 @@ pip install -r requirements.txt
 python run.py
 ```
 
-This will:
-1. Generate synthetic data for 50 patients (1 day each)
-2. Engineer strictly causal features
-3. Train and evaluate all three models via 5-fold GroupKFold CV
-4. Print a results table comparing ROC-AUC, PR-AUC, precision, recall, and F1
+this will:
+1. generate synthetic data for 50 patients (1 day each)
+2. engineer strictly causal features
+3. train and evaluate all three models via 5-fold GroupKFold CV
+4. print a results table comparing ROC-AUC, PR-AUC, precision, recall, and F1
 
 ---
 
-## 🌸 Honest limitations
+## 🌸 honest limitations
 
-This is a **proof-of-concept on synthetic data**. It has not been validated on real patients.
+this is a **proof-of-concept on synthetic data**. it has not been validated on real patients.
 
-| Limitation | Notes |
+| limitation | notes |
 |---|---|
-| Synthetic data only | Real POTS dynamics may differ significantly |
-| No calibration | Predicted probabilities are not yet calibrated |
-| Fixed 0.5 threshold | Clinical deployment needs a cost-function-driven threshold |
-| No SHAP yet | Deferred until the model is validated on data worth interpreting |
-| No hyperparameter tuning | Premature until data generation is validated |
-| 1 day per patient | Real datasets need multi-day trajectories |
+| synthetic data only | real PoTS dynamics may differ significantly |
+| no calibration | predicted probabilities are not yet calibrated |
+| fixed 0.5 threshold | clinical deployment needs a cost-function-driven threshold |
+| no SHAP yet | Deferred until the model is validated on data worth interpreting |
+| bo hyperparameter tuning | Premature until data generation is validated |
+| 1 day per patient | real datasets need multi-day trajectories |
 
 ---
 
-## 🚫 What is intentionally NOT here
-
-- **LSTM / deep learning** — 50 patients × 1440 minutes is not enough data to justify it. XGBoost with lag features captures the relevant temporal signal with far less variance.
-- **Dashboard / API / UI** — this is a research pipeline, not a product.
-- **Real patient data** — future work pending IRB-approved dataset access.
-
----
 
 ## 💗 Future roadmap
 
-- [x] Multi-day simulation (7 days per patient, configurable via `config.py`)
-- [x] SHAP feature importance analysis (XGBoost, printed to console)
-- [x] Probability calibration (Platt scaling via `CalibratedClassifierCV`)
-- [x] Sensitivity analysis on forecasting horizon (5, 10, 15, 30 min)
-- [x] Hyperparameter tuning (RandomizedSearchCV, nested CV)
-- [x] Clinical cost-function threshold selection (`find_clinical_threshold()`)
-- [ ] Validation against real wearable data (Apple Watch / Garmin exports)
-- [ ] Reliability diagrams (visual calibration curves)
-- [ ] Multi-day temporal train/test split (train days 1–5, test days 6–7)
+- [ ] validation against real wearable data (Apple Watch / Garmin exports)
+- [ ] reliability diagrams (visual calibration curves)
+- [ ] multi-day temporal train/test split (train days 1–5, test days 6–7)
 
 ---
 
 <div align="center">
 
-*built with care for everyone navigating life with POTS* 🌸
+*built with care* 🌸
 
 </div>
