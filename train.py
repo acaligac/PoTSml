@@ -38,6 +38,7 @@ from config import (
     XGB_SEARCH_CV,
     LR_SEARCH_SPACE,
     MODEL_DIR,
+    PLOTS_DIR,
     SEED,
 )
 
@@ -69,21 +70,21 @@ def rule_baseline_predict(X: pd.DataFrame) -> np.ndarray:
 def _tune_logistic_regression(
     X_train_scaled: np.ndarray,
     y_train: np.ndarray,
+    groups_train: np.ndarray,
 ) -> LogisticRegression:
     """
-    Tune LogisticRegression C via GridSearchCV on the pre-scaled training set.
-    Uses GridSearchCV (not Randomized) since the search space is small (5 values).
-    Scores on PR-AUC (average_precision) — the right metric for imbalanced data.
+    Tune LogisticRegression C via GridSearchCV with GroupKFold inner CV.
+    Small search space (5 values) so GridSearchCV is exhaustive and fast.
     """
     lr = LogisticRegression(max_iter=1000, random_state=SEED)
     search = GridSearchCV(
         lr,
         LR_SEARCH_SPACE,
-        cv=3,
+        cv=GroupKFold(n_splits=3),
         scoring="average_precision",
         n_jobs=-1,
     )
-    search.fit(X_train_scaled, y_train)
+    search.fit(X_train_scaled, y_train, groups=groups_train)
     return search.best_estimator_
 
 
@@ -213,10 +214,19 @@ def train_and_evaluate(
         "xgboost": [],
         "shap_importance": None,
         "best_xgb_params": {},
+        # Raw predictions accumulated across folds — used by plots.py
+        "predictions": {
+            "y_true": [],
+            "rule_baseline": [],
+            "logistic_regression": [],
+            "xgboost_raw": [],
+            "xgboost_cal": [],
+        },
     }
 
-    last_xgb_model = None   # save final fold's model for SHAP + serialization
-    last_X_test = None      # save final fold's held-out set for SHAP (never seen by model)
+    last_xgb_model = None       # raw model for SHAP (TreeExplainer needs unwrapped XGBClassifier)
+    last_calibrated_xgb = None  # calibrated model — what gets serialized and deployed
+    last_X_test = None          # held-out set for SHAP (never seen by model)
 
     for fold, (train_idx, test_idx) in enumerate(gkf.split(X, y, groups)):
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
@@ -227,9 +237,14 @@ def train_and_evaluate(
               f"Test: {len(np.unique(groups[test_idx]))} patients")
         print(f"  Train prevalence: {y_train.mean():.3f} | Test prevalence: {y_test.mean():.3f}")
 
+        # groups_train used by both LR and XGBoost inner CV — define it first
+        groups_train = groups[train_idx]
+
         # 1. Rule baseline (no fitting)
         rule_probs = rule_baseline_predict(X_test)
         results["rule_baseline"].append(compute_metrics(y_test, rule_probs))
+        results["predictions"]["rule_baseline"].append(rule_probs)
+        results["predictions"]["y_true"].append(y_test)
 
         # 2. Logistic regression — scale then optionally tune
         scaler = StandardScaler()
@@ -237,7 +252,7 @@ def train_and_evaluate(
         X_test_scaled = scaler.transform(X_test)
 
         if tune:
-            lr = _tune_logistic_regression(X_train_scaled, y_train)
+            lr = _tune_logistic_regression(X_train_scaled, y_train, groups_train)
             print(f"  LR best params: C={lr.C}")
         else:
             lr = LogisticRegression(max_iter=1000, random_state=SEED)
@@ -245,9 +260,9 @@ def train_and_evaluate(
 
         lr_probs = lr.predict_proba(X_test_scaled)[:, 1]
         results["logistic_regression"].append(compute_metrics(y_test, lr_probs))
+        results["predictions"]["logistic_regression"].append(lr_probs)
 
         # 3. XGBoost — optionally tune, then calibrate
-        groups_train = groups[train_idx]
         if tune:
             xgb_model = _tune_xgboost(X_train, y_train, groups_train)
             print(f"  XGB best params: {xgb_model.get_params()}")
@@ -258,11 +273,19 @@ def train_and_evaluate(
 
         # Calibrate: Platt scaling on a held-out slice of training data
         calibrated_xgb = _calibrate_xgboost(xgb_model, X_train, y_train)
-        xgb_probs = calibrated_xgb.predict_proba(X_test)[:, 1]
-        results["xgboost"].append(compute_metrics(y_test, xgb_probs))
+        xgb_probs_raw = xgb_model.predict_proba(X_test)[:, 1]
+        xgb_probs_cal = calibrated_xgb.predict_proba(X_test)[:, 1]
+        results["xgboost"].append(compute_metrics(y_test, xgb_probs_cal))
+        results["predictions"]["xgboost_raw"].append(xgb_probs_raw)
+        results["predictions"]["xgboost_cal"].append(xgb_probs_cal)
 
-        last_xgb_model = xgb_model  # keep for SHAP + serialization
-        last_X_test = X_test        # held-out data this model never trained on
+        last_xgb_model = xgb_model          # raw model — used for SHAP (TreeExplainer needs it)
+        last_calibrated_xgb = calibrated_xgb  # calibrated — what gets serialized
+        last_X_test = X_test                # held-out data this model never trained on
+
+    # Flatten per-fold prediction lists into single arrays
+    for key in results["predictions"]:
+        results["predictions"][key] = np.concatenate(results["predictions"][key])
 
     # SHAP importance computed on the last fold's test set — data the model
     # never saw during training, so importance values aren't inflated by overfitting.
@@ -271,9 +294,9 @@ def train_and_evaluate(
             last_xgb_model, last_X_test, feature_cols
         )
 
-    # Serialize the last fold's XGBoost model
+    # Serialize the calibrated model — consistent with what was evaluated
     os.makedirs(MODEL_DIR, exist_ok=True)
-    joblib.dump(last_xgb_model, os.path.join(MODEL_DIR, "xgboost.pkl"))
+    joblib.dump(last_calibrated_xgb, os.path.join(MODEL_DIR, "xgboost_calibrated.pkl"))
     if tune:
         joblib.dump(results["best_xgb_params"], os.path.join(MODEL_DIR, "xgb_best_params.pkl"))
 

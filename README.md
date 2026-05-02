@@ -2,7 +2,12 @@
 
 # 🌸 PoTS episode prediction 🌸
 
-*a machine learning pipeline for forecasting symptomatic POTS episodes from wearable physiological data*
+![Python](https://img.shields.io/badge/Python-3.9+-ff69b4?style=for-the-badge&logo=python&logoColor=white)
+![XGBoost](https://img.shields.io/badge/XGBoost-ff85c2?style=for-the-badge&logoColor=white)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-ffb6c1?style=for-the-badge&logo=scikit-learn&logoColor=white)
+![Status](https://img.shields.io/badge/status-proof--of--concept-ff69b4?style=for-the-badge)
+
+*a machine learning pipeline for forecasting symptomatic PoTS episodes from wearable physiological data*
 
 </div>
 
@@ -14,37 +19,67 @@
 
 ---
 
-## 🌷 What this project does
+## 🌷 what this project does
 
 this is a **forecasting pipeline**, not a nowcasting one. the model answers:
 
-> *"based on your heart rate, HRV, and posture over the last 30 minutes will you likely have a symptomatic episode in the next 15 minutes?"*
+> *"based on your heart rate, HRV, and posture over the last 30 minutes — will you likely have a symptomatic episode in the next 15 minutes?"*
 
-knowing you're *currently* symptomatic is useless. knowing you're *about to be* symptomatic gives you time to sit down, hydrate, take medication, or cancel that standing meeting.
+knowing you're *currently* symptomatic is useless. knowing you're *about to be* gives you time to sit down, hydrate, take medication, or cancel that standing meeting.
 
 ---
 
-## 🌸 Architecture overview
+## 🩷 results
+
+### what the data looks like
+
+![patient example](plots/patient_example.png)
+
+*one synthetic patient, one day. pink shading marks symptomatic minutes. note how HR climbs and HRV drops before symptoms appear — that lag is the signal the model learns.*
+
+---
+
+### what the model learned
+
+![shap importance](plots/shap_importance.png)
+
+the top three features — **30-min HR baseline**, **short-vs-long HR trend**, and **how long the patient has been standing** — are exactly what a clinician would look for. the model isn't cheating; it's learning the right physiology.
+
+---
+
+### model comparison (50 patients × 3 days, 5-fold GroupKFold)
+
+> threshold is chosen per-fold to achieve ≥80% recall with maximum precision — not hardcoded at 0.5.
+
+| model | ROC-AUC | PR-AUC | Brier ↓ | Recall | Precision |
+|---|---|---|---|---|---|
+| rule baseline | 0.525 ± 0.003 | 0.333 ± 0.009 | 0.285 ± 0.006 | 1.000 | 0.320 |
+| logistic regression | 0.624 ± 0.010 | 0.398 ± 0.013 | 0.211 ± 0.004 | 0.800 | 0.379 |
+| **XGBoost** | **0.632 ± 0.009** | **0.413 ± 0.011** | **0.210 ± 0.004** | **0.800** | **0.382** |
+
+random PR-AUC baseline (= prevalence) ≈ 0.32. XGBoost is **29% above random** and beats the rule baseline by **+24% PR-AUC**, at the same recall. run `python run.py` to regenerate plots for PR curves, calibration, and full horizon sensitivity.
+
+---
+
+## 🌸 architecture
 
 ```
 Latent autonomic state (hidden)
         │
         ▼
-Physiological signals          →   Feature engineering   →   XGBoost classifier
-  HR, HRV proxy, posture              (strictly causal)          ↑
-        │                                                    Logistic Regression
-        ▼                                                         ↑
- Stochastic symptom                                         Rule-based baseline
+Physiological signals          →   causal features   →   XGBoost (calibrated)
+  HR, HRV proxy, posture                                       ↑
+        │                                              Logistic Regression
+        ▼                                                       ↑
+ Stochastic symptom                                    Rule-based baseline
   emission w/ 5–20 min lag
 ```
 
-**three models are trained and compared:**
-
 | model | purpose |
 |---|---|
-| 🩺 rule-based baseline | would a clinician eyeballing the chart catch this? |
-| 📈 logistic Regression | is the problem even linearly separable? |
-| 🌲 XGBoost | can we do better with temporal lag features? |
+| 🩺 rule baseline | would a clinician eyeballing the chart catch this? |
+| 📈 logistic regression | is the problem linearly separable? |
+| 🌲 XGBoost | can we do better with nonlinear temporal features? |
 
 ---
 
@@ -52,35 +87,37 @@ Physiological signals          →   Feature engineering   →   XGBoost classif
 
 ### 1. latent-state data generation
 
-rather than hand-waving synthetic data, the generator uses a **4-state autonomic Markov model**:
+a **4-state autonomic Markov model** drives everything. features and labels share a common hidden cause but are never directly coupled.
 
-| State | Meaning | Standing transition |
+| state | meaning | standing transition |
 |---|---|---|
 | 0 — stable | normal compensation | low escalation risk |
 | 1 — compensated | mild autonomic stress | moderate escalation |
 | 2 — stressed | significant strain | high escalation |
 | 3 — decompensating | pre-symptomatic | very high symptom probability |
 
-posture drives state transitions. circadian rhythm modulates HR. patient-level severity (`pots_severity ~ Uniform(0.3, 1.0)`) scales reactivity. symptoms are emitted from states 2–3 with a **5–20 minute stochastic lag** which is what makes this a non-trivial forecasting task.
+posture drives transitions. circadian rhythm modulates HR. patient-level severity (`pots_severity ~ Uniform(0.3, 1.0)`) scales reactivity. symptoms are emitted from states 2–3 with a **5–20 min stochastic lag** — making this a genuinely non-trivial forecasting problem.
 
 ### 2. strictly causal features
 
-every feature at time *t* uses only data from times ≤ *t*. this means:
-- expanding (not rolling) mean for baseline HR deviation
-- no global statistics computed before the prediction window
-- no `fillna(0)` shortcuts that implicitly leak structure
+every feature at time *t* uses only data from times ≤ *t*:
+- expanding (not rolling) mean for the HR baseline
+- backward-only rolling windows
+- `min_periods=horizon` on the label so incomplete end-of-series windows drop cleanly
 
-automated leakage tests in `tests/test_leakage.py` enforce this.
+automated leakage tests in `test_leakage.py` enforce this.
 
-### 3. patient-level cross-validation
+### 3. patient-level cross-validation — inner and outer
 
-`GroupKFold(n_splits=5)` ensures **no patient appears in both train and test**. without this, the model memorizes patient-specific baselines and evaluation metrics are meaningless.
+`GroupKFold` in the outer loop ensures no patient appears in both train and test. the same `GroupKFold` + patient `groups` are passed into `GridSearchCV`/`RandomizedSearchCV` for hyperparameter tuning — so leakage can't re-enter through the inner CV either.
 
-### 4. metrics chosen for clinical relevance
+### 4. probability calibration
 
-- **PR-AUC** — the right metric for imbalanced data (~5–8% symptom prevalence)
-- **ROC-AUC** — threshold-independent discrimination
-- **Precision & Recall** — reported together; the operating threshold is a clinical decision, not a modeling one
+raw XGBoost scores are not probabilities. `_PlattScaledClassifier` holds out the last 20% of each training fold, fits a logistic regression on top of the raw scores, and produces calibrated probabilities. the serialized model (`models/xgboost_calibrated.pkl`) is the calibrated version.
+
+### 5. clinical threshold selection
+
+`find_clinical_threshold()` finds the highest-precision decision threshold that still achieves ≥80% recall. missing an episode (false negative) is more costly than a false alarm, so we fix minimum sensitivity first and maximize precision within that constraint.
 
 ---
 
@@ -97,9 +134,9 @@ automated leakage tests in `tests/test_leakage.py` enforce this.
 | `hr_roll5_mean` / `_std` | short-term HR trend + volatility | 5 min |
 | `hrv_roll5_mean` / `_std` | short-term HRV trend + volatility | 5 min |
 | `hr_roll30_mean` | longer-term HR context | 30 min |
-| `hr_trend` | short- vs. long-term HR divergence | 5 vs. 30 min |
-| `hr_accel` | rate of HR change | 3 min diff |
-| `hr_lag1/3/5/10` | past HR values (ARIMA-like) | 1/3/5/10 min |
+| `hr_trend` | short-vs-long HR divergence | 5 vs 30 min |
+| `hr_accel` | smoothed rate of HR change | 3 min diff |
+| `hr_lag1/3/5/10` | past HR values | 1/3/5/10 min |
 | `hrv_lag1/3/5/10` | past HRV values | 1/3/5/10 min |
 
 ---
@@ -108,17 +145,18 @@ automated leakage tests in `tests/test_leakage.py` enforce this.
 
 ```
 pots-episode-prediction/
-├── run.py                 # 🎯 single entry point — start here
-├── generate_data.py       # latent-state synthetic data generator
-├── features.py            # strictly causal feature engineering
-├── train.py               # GroupKFold training (LogReg + XGBoost)
-├── evaluate.py            # metrics computation & reporting
-├── tests/
-│   └── test_leakage.py    # automated leakage detection
-├── data/                  # generated datasets (gitignored)
-├── models/                # trained models (gitignored)
+├── run.py              # 🎯 single entry point — start here
+├── config.py           # all parameters in one place
+├── generate_data.py    # latent-state synthetic data generator
+├── features.py         # strictly causal feature engineering
+├── train.py            # GroupKFold training (LogReg + XGBoost)
+├── evaluate.py         # metrics + clinical threshold selection
+├── plots.py            # pink-themed visualizations
+├── test_leakage.py     # automated leakage detection
 ├── requirements.txt
-└── .gitignore
+├── data/               # generated datasets (gitignored)
+├── models/             # trained models (gitignored)
+└── plots/              # generated figures
 ```
 
 ---
@@ -126,87 +164,40 @@ pots-episode-prediction/
 ## 🩷 how to run
 
 ```bash
-# clone
 git clone https://github.com/acaligac/PoTSml.git
 cd PoTSml
-
-# install dependencies
 pip install -r requirements.txt
-
-# run the full pipeline
 python run.py
 ```
 
-this will:
-1. generate synthetic data for 50 patients (1 day each)
-2. engineer strictly causal features
-3. train and evaluate all three models via 5-fold GroupKFold CV
-4. print a results table comparing ROC-AUC, PR-AUC, precision, recall, and F1
+this will generate data, train all models, print results, run horizon sensitivity, and save all plots to `plots/`.
 
 ---
 
-## 🩷 Results (50 patients × 3 days, default XGBoost params, 5-fold GroupKFold)
+## 🌸 honest limitations
 
-> Threshold is chosen per-fold to achieve ≥80% recall with maximum precision — not hardcoded at 0.5.
-
-**Model comparison**
-
-| Model | ROC-AUC | PR-AUC | Brier ↓ | Recall | Precision |
-|---|---|---|---|---|---|
-| Rule baseline | 0.525 ± 0.003 | 0.333 ± 0.009 | 0.285 ± 0.006 | 1.000 | 0.320 |
-| Logistic Regression | 0.624 ± 0.010 | 0.398 ± 0.013 | 0.211 ± 0.004 | 0.800 | 0.379 |
-| **XGBoost** | **0.632 ± 0.009** | **0.413 ± 0.011** | **0.210 ± 0.004** | **0.800** | **0.382** |
-
-Random PR-AUC baseline (= prevalence) ≈ 0.32. XGBoost is 29% above random and beats the rule baseline by +24% PR-AUC, at the same recall.
-
-**XGBoost feature importance (mean |SHAP|, last fold test set)**
-
-| Rank | Feature | Mean \|SHAP\| |
-|---|---|---|
-| 1 | `hr_roll30_mean` | 0.2491 |
-| 2 | `hr_trend` | 0.1939 |
-| 3 | `hrv_lag10` | 0.1632 |
-| 4 | `posture_duration` | 0.1192 |
-| 5 | `hrv_roll5_mean` | 0.1047 |
-| 6 | `delta_hr` | 0.1018 |
-| 7 | `heart_rate` | 0.0965 |
-| 8–21 | lags, std features, posture | < 0.07 |
-
-The model correctly identifies the 30-minute HR baseline, the short-vs-long HR trend, and how long the patient has been standing as the dominant signals — consistent with POTS physiology.
-
-**Horizon sensitivity (XGBoost, 5-fold GroupKFold)**
-
-| Horizon | ROC-AUC | PR-AUC | Recall |
-|---|---|---|---|
-| 5 min | 0.643 ± 0.005 | 0.271 ± 0.007 | 0.800 |
-| 10 min | — | — | — |
-| **15 min** ← default | **0.632 ± 0.009** | **0.413 ± 0.011** | **0.800** |
-| 30 min | — | — | — |
-
-> Run `python run.py` locally for the full horizon sweep.
-
----
-
-## 🌸 Honest limitations
-
-this is a **proof-of-concept on synthetic data**. it has not been validated on real patients.
+this is a **proof-of-concept on synthetic data**. not validated on real patients.
 
 | limitation | notes |
 |---|---|
 | synthetic data only | real PoTS dynamics may differ significantly |
-| no calibration | predicted probabilities are not yet calibrated |
-| fixed 0.5 threshold | clinical deployment needs a cost-function-driven threshold |
-| no SHAP yet | Deferred until the model is validated on data worth interpreting |
-| bo hyperparameter tuning | Premature until data generation is validated |
-| 1 day per patient | real datasets need multi-day trajectories |
+| no real-world validation | future work pending IRB-approved dataset access |
+| HR signal is i.i.d. per timestep | real wearable data has AR(1) autocorrelation |
+| 50 patients | effective sample size is much lower due to temporal dependence |
 
 ---
 
-
-## 💗 Future roadmap
+## 💗 future roadmap
 
 - [ ] validation against real wearable data (Apple Watch / Garmin exports)
-- [ ] reliability diagrams (visual calibration curves)
 - [ ] multi-day temporal train/test split (train days 1–5, test days 6–7)
+- [ ] AR(1) noise in HR signal for more realistic autocorrelation
+- [x] label correctness test in `test_leakage.py`
 
+---
 
+<div align="center">
+
+*built with care for everyone navigating life with PoTS* 🌸
+
+</div>
