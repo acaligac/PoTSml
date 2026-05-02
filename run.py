@@ -9,9 +9,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from src.generate_data import generate_dataset
-from src.features import build_features, get_feature_columns
-from src.train import train_and_evaluate, print_results
+from generate_data import generate_dataset
+from features import build_features, get_feature_columns
+from train import train_and_evaluate, print_results
 
 
 def main():

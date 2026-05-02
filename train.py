@@ -20,8 +20,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 import xgboost as xgb
 
-from src.evaluate import compute_metrics, print_fold_summary
-
+from evaluate import compute_metrics, print_fold_summary
 
 N_FOLDS = 5
 
