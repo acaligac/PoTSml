@@ -147,10 +147,16 @@ def _generate_symptom_from_state_history(
 
 def generate_patient(
     patient_id: int,
-    n_minutes: int = 1440,
+    n_days: int = 1,
     seed: int | None = None,
 ) -> pd.DataFrame:
-    """Generate one patient-day of synthetic POTS data."""
+    """
+    Generate synthetic POTS data for one patient over n_days days.
+
+    Multi-day simulation provides more realistic episode count distributions
+    and enables testing temporal generalization across days.
+    """
+    n_minutes = n_days * 1440
     rng = np.random.default_rng(seed if seed is not None else patient_id)
 
     # Patient-level physiology
@@ -200,7 +206,7 @@ def generate_patient(
     # Generate symptoms from latent state (LAGGED)
     symptoms = _generate_symptom_from_state_history(states, rng)
 
-    time = pd.date_range("2024-01-01", periods=n_minutes, freq="1min")
+    time = pd.date_range("2024-01-01", periods=n_minutes, freq="1min", tz=None)
 
     return pd.DataFrame({
         "time": time,
@@ -214,12 +220,12 @@ def generate_patient(
     })
 
 
-def generate_dataset(n_patients: int = 50, seed: int = 42) -> pd.DataFrame:
+def generate_dataset(n_patients: int = 50, n_days: int = 1, seed: int = 42) -> pd.DataFrame:
     """Generate full dataset with reproducible per-patient seeds."""
     rng = np.random.default_rng(seed)
     patient_seeds = rng.integers(0, 2**31, size=n_patients)
 
-    dfs = [generate_patient(pid, seed=int(s)) for pid, s in enumerate(patient_seeds)]
+    dfs = [generate_patient(pid, n_days=n_days, seed=int(s)) for pid, s in enumerate(patient_seeds)]
     df = pd.concat(dfs, ignore_index=True)
 
     return df
@@ -227,10 +233,11 @@ def generate_dataset(n_patients: int = 50, seed: int = 42) -> pd.DataFrame:
 
 if __name__ == "__main__":
     import os
-    os.makedirs("data", exist_ok=True)
-    df = generate_dataset()
+    from config import N_PATIENTS, N_DAYS, SEED, DATA_DIR
+    os.makedirs(DATA_DIR, exist_ok=True)
+    df = generate_dataset(n_patients=N_PATIENTS, n_days=N_DAYS, seed=SEED)
     # Drop latent state before saving — it's for validation only
-    df.drop(columns=["_latent_state"]).to_csv("data/pots_dataset.csv", index=False)
-    print(f"Generated {len(df)} rows, {df['patient_id'].nunique()} patients")
+    df.drop(columns=["_latent_state"]).to_csv(f"{DATA_DIR}/pots_dataset.csv", index=False)
+    print(f"Generated {len(df)} rows, {df['patient_id'].nunique()} patients, {N_DAYS} days each")
     print(f"Symptom rate: {df['symptom'].mean():.3f}")
     print(f"Posture=1 rate: {df['posture'].mean():.3f}")

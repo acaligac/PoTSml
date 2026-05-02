@@ -9,8 +9,9 @@ The forecasting label: will a symptom occur in the next HORIZON minutes?
 
 import pandas as pd
 import numpy as np
+from config import DEFAULT_HORIZON
 
-HORIZON = 15  # predict symptoms 15 minutes ahead
+HORIZON = DEFAULT_HORIZON  # predict symptoms N minutes ahead
 
 
 def build_features(df: pd.DataFrame, horizon: int = HORIZON) -> pd.DataFrame:
@@ -73,8 +74,12 @@ def build_features(df: pd.DataFrame, horizon: int = HORIZON) -> pd.DataFrame:
         .transform(lambda x: x.rolling(10, min_periods=1).mean())
     )
 
-    # HR acceleration: rate of change over last 3 minutes
-    df["hr_accel"] = df["heart_rate"] - df.groupby("patient_id")["heart_rate"].shift(3)
+    # HR acceleration: rate of change of the smoothed signal over last 3 minutes.
+    # Using hr_roll5_mean instead of raw heart_rate suppresses sensor noise,
+    # which otherwise dominates the raw 3-minute diff.
+    df["hr_accel"] = (
+        df["hr_roll5_mean"] - df.groupby("patient_id")["hr_roll5_mean"].shift(3)
+    )
 
     # --- Drop rows with undefined features ---
     feature_cols = get_feature_columns()
