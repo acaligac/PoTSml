@@ -72,7 +72,7 @@ def main():
     print(f"  Horizon: {DEFAULT_HORIZON} min | CV folds: {N_FOLDS}")
 
     # 1. Generate data
-    print(f"\n[1/5] Generating synthetic dataset ({N_PATIENTS}p × {N_DAYS}d)...")
+    print(f"\n[1/6] Generating synthetic dataset ({N_PATIENTS}p × {N_DAYS}d)...")
     df = generate_dataset(n_patients=N_PATIENTS, n_days=N_DAYS, seed=SEED)
     print(f"  {len(df):,} rows | symptom rate: {df['symptom'].mean():.3f} "
           f"| standing rate: {df['posture'].mean():.3f}")
@@ -80,25 +80,25 @@ def main():
     df.drop(columns=["_latent_state"]).to_csv(f"{DATA_DIR}/pots_dataset.csv", index=False)
 
     # 2. Feature engineering
-    print(f"\n[2/5] Building features (horizon={DEFAULT_HORIZON} min)...")
+    print(f"\n[2/6] Building features (horizon={DEFAULT_HORIZON} min)...")
     df_feat      = build_features(df, horizon=DEFAULT_HORIZON)
     feature_cols = get_feature_columns()
     print(f"  {len(df_feat):,} rows | {len(feature_cols)} features "
           f"| label prevalence: {df_feat['label'].mean():.3f}")
 
     # 3. Train + evaluate
-    print(f"\n[3/5] Training — {N_FOLDS}-fold GroupKFold + tuning...")
+    print(f"\n[3/6] Training — {N_FOLDS}-fold GroupKFold + tuning...")
     print("  (takes a few minutes due to nested CV)")
     results = train_and_evaluate(df_feat, feature_cols, n_folds=N_FOLDS, tune=True)
 
     # 4. Results table
-    print("\n[4/5] Results")
+    print("\n[4/6] Results")
     print_results(results)
     if results["best_xgb_params"]:
         print(f"\n  Calibrated model → {MODEL_DIR}/xgboost_calibrated.pkl")
 
     # 5. Horizon sensitivity
-    print("\n[5/5] Horizon sensitivity analysis")
+    print("\n[5/6] Horizon sensitivity analysis")
     print("=" * 60)
     horizon_results = run_horizon_sensitivity(df, feature_cols)
 

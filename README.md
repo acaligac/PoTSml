@@ -192,7 +192,7 @@ this is a **proof-of-concept on synthetic data**. not validated on real patients
 - [ ] validation against real wearable data (Apple Watch / Garmin exports)
 - [ ] multi-day temporal train/test split (train days 1–5, test days 6–7)
 - [ ] AR(1) noise in HR signal for more realistic autocorrelation
-- [ ] label correctness test in `test_leakage.py`
+- [x] label correctness test in `test_leakage.py`
 
 ---
 

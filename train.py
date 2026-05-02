@@ -237,6 +237,9 @@ def train_and_evaluate(
               f"Test: {len(np.unique(groups[test_idx]))} patients")
         print(f"  Train prevalence: {y_train.mean():.3f} | Test prevalence: {y_test.mean():.3f}")
 
+        # groups_train used by both LR and XGBoost inner CV — define it first
+        groups_train = groups[train_idx]
+
         # 1. Rule baseline (no fitting)
         rule_probs = rule_baseline_predict(X_test)
         results["rule_baseline"].append(compute_metrics(y_test, rule_probs))
@@ -260,7 +263,6 @@ def train_and_evaluate(
         results["predictions"]["logistic_regression"].append(lr_probs)
 
         # 3. XGBoost — optionally tune, then calibrate
-        groups_train = groups[train_idx]
         if tune:
             xgb_model = _tune_xgboost(X_train, y_train, groups_train)
             print(f"  XGB best params: {xgb_model.get_params()}")
