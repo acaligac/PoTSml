@@ -69,7 +69,7 @@ generates data, trains everything, prints results, saves plots to `plots/`.
 
 ## honest caveats
 
-synthetic data only — real PoTS dynamics could look different. no real patient validation yet. HR signal is i.i.d. per timestep (real wearables have autocorrelation). 50 patients sounds like a lot until you account for temporal dependence.
+synthetic data only, real PoTS dynamics could look different. no real patient validation yet. HR signal is i.i.d. per timestep (real wearables have autocorrelation). 50 patients sounds like a lot until you account for temporal dependence.
 
 it's just a proof of concept.
 
